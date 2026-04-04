@@ -1,0 +1,71 @@
+{
+  "numFreezers": 20,
+  "defaultTemperature": -20.0,
+  "telemetryIntervalSeconds": 20,
+
+  "regions": [
+    {
+      "name": "Parque das Nacoes",
+      "alias": "pqnacoes",
+      "lat": 38.7635,
+      "lon": -9.0938,
+      "weight": 0.15
+    },
+    {
+      "name": "Baixa",
+      "alias": "baixa",
+      "lat": 38.7110,
+      "lon": -9.1375,
+      "weight": 0.30
+    },
+    {
+      "name": "Belem",
+      "alias": "belem",
+      "lat": 38.6972,
+      "lon": -9.2064,
+      "weight": 0.25
+    },
+    {
+      "name": "Cais do Sodre",
+      "alias": "caissodre",
+      "lat": 38.7061,
+      "lon": -9.1450,
+      "weight": 0.30
+    }
+  ],
+
+  "temperature": {
+    "powerOffWarmingMin": 0.5,
+    "powerOffWarmingMax": 1.0,
+    "doorOpenWarmingMin": 0.3,
+    "doorOpenWarmingMax": 0.8,
+    "compressorCorrectionFactor": 0.3,
+    "noiseMin": -0.6,
+    "noiseMax": 0.6
+  },
+
+  "inventory": {
+    "autoRestock": false,
+    "initRangeMin": 40.0,
+    "initRangeMax": 100.0,
+    "depletionMin": 0.1,
+    "depletionMax": 0.7,
+    "bulkPurchaseProbability": 0.05,
+    "bulkPurchaseDropMin": 5.0,
+    "bulkPurchaseDropMax": 10.0,
+    "restockThreshold": 20.0,
+    "restockFillLevel": 100.0,
+    "restockWaitCyclesMin": 1,
+    "restockWaitCyclesMax": 30,
+    "consoleWarningThreshold": 20.0
+  },
+
+  "inventoryStartDistribution": {
+    "lowPercent": 0.05,
+    "lowRangeMin": 0.0,
+    "lowRangeMax": 10.0,
+    "midPercent": 0.05,
+    "midRangeMin": 15.0,
+    "midRangeMax": 31.0
+  }
+}
