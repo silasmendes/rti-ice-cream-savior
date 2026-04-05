@@ -78,6 +78,11 @@ def build_freezers(cfg):
                     cfg["inventory"]["initRangeMin"],
                     cfg["inventory"]["initRangeMax"]), 1),
                 "restockCyclesRemaining": 0,
+                "isLowSeller": False,
+                "sellCooldownRemaining": 0,
+                "lowSellerRule": None,
+                "isHighSeller": False,
+                "highSellerRule": None,
             }
     return result
 
@@ -133,20 +138,47 @@ def generate_telemetry():
             inv = state["inventoryLevelPercent"]
             restock_remaining = state["restockCyclesRemaining"]
 
+            # Low-seller gate: these freezers only sell once every N cycles
+            is_low_seller = state.get("isLowSeller", False)
+            sell_cooldown = state.get("sellCooldownRemaining", 0)
+            low_rule = state.get("lowSellerRule")
+            can_sell = True
+            if is_low_seller:
+                if sell_cooldown > 0:
+                    sell_cooldown -= 1
+                    can_sell = False          # no sale this cycle
+                else:
+                    # Sale happens this cycle – reset cooldown for next sale
+                    sell_cooldown = random.randint(
+                        low_rule["sellIntervalMin"], low_rule["sellIntervalMax"])
+                    can_sell = True
+            state["sellCooldownRemaining"] = sell_cooldown
+
+            # Resolve per-cycle depletion & bulk-purchase parameters
+            is_high_seller = state.get("isHighSeller", False)
+            high_rule = state.get("highSellerRule")
+
+            dep_min = high_rule["depletionMin"] if is_high_seller else icfg["depletionMin"]
+            dep_max = high_rule["depletionMax"] if is_high_seller else icfg["depletionMax"]
+            bulk_prob = high_rule["bulkPurchaseProbability"] if is_high_seller else icfg["bulkPurchaseProbability"]
+            # Low sellers with allowBulkPurchase=false never get bulk drops
+            allow_bulk = True
+            if is_low_seller and not low_rule.get("allowBulkPurchase", True):
+                allow_bulk = False
+
             if restock_remaining > 0:
                 restock_remaining -= 1
                 if restock_remaining == 0:
                     inv = icfg["restockFillLevel"]
-                else:
-                    if inv > 0:
-                        inv -= random.uniform(icfg["depletionMin"], icfg["depletionMax"])
-                        if random.random() < icfg["bulkPurchaseProbability"]:
-                            inv -= random.uniform(icfg["bulkPurchaseDropMin"], icfg["bulkPurchaseDropMax"])
-                        inv = max(inv, 0.0)
+                elif can_sell and inv > 0:
+                    inv -= random.uniform(dep_min, dep_max)
+                    if allow_bulk and random.random() < bulk_prob:
+                        inv -= random.uniform(icfg["bulkPurchaseDropMin"], icfg["bulkPurchaseDropMax"])
+                    inv = max(inv, 0.0)
             else:
-                if inv > 0:
-                    inv -= random.uniform(icfg["depletionMin"], icfg["depletionMax"])
-                    if random.random() < icfg["bulkPurchaseProbability"]:
+                if can_sell and inv > 0:
+                    inv -= random.uniform(dep_min, dep_max)
+                    if allow_bulk and random.random() < bulk_prob:
                         inv -= random.uniform(icfg["bulkPurchaseDropMin"], icfg["bulkPurchaseDropMax"])
                     inv = max(inv, 0.0)
 
@@ -155,6 +187,20 @@ def generate_telemetry():
 
             state["inventoryLevelPercent"] = round(inv, 1)
             state["restockCyclesRemaining"] = restock_remaining
+
+            # ── Simulate door open / close ───────────────────────
+            # Resolve door-open probability: high sellers > default > low sellers
+            if inv <= 0:
+                door_prob = 0.0                          # empty freezer – no customers
+            elif is_high_seller:
+                door_prob = high_rule.get("doorOpenProbability", icfg["doorOpenProbability"])
+            elif is_low_seller:
+                base = low_rule.get("doorOpenProbability", icfg["doorOpenProbability"])
+                # When on cooldown (no active sale), halve the already-low probability
+                door_prob = base * 0.5 if not can_sell else base
+            else:
+                door_prob = icfg["doorOpenProbability"]
+            state["doorOpen"] = random.random() < door_prob
 
             if inv < icfg["consoleWarningThreshold"]:
                 print(f"\033[91m⚠️  {device_id} inventory LOW: {state['inventoryLevelPercent']}%"
@@ -182,17 +228,20 @@ def generate_telemetry():
                     freezers[device_id]["actualTemperature"] = state["actualTemperature"]
                     freezers[device_id]["inventoryLevelPercent"] = state["inventoryLevelPercent"]
                     freezers[device_id]["restockCyclesRemaining"] = state["restockCyclesRemaining"]
+                    freezers[device_id]["sellCooldownRemaining"] = state["sellCooldownRemaining"]
+                    freezers[device_id]["doorOpen"] = state["doorOpen"]
 
-            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-            file_name = f"{device_id}_{ts}.json"
-            file_path = os.path.join(run_dir, file_name)
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(message, f, indent=2)
+            if CFG.get("enableLocalJsonOutput", True):
+                ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+                file_name = f"{device_id}_{ts}.json"
+                file_path = os.path.join(run_dir, file_name)
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(message, f, indent=2)
 
             messages.append(message)
 
         # Send batch to Event Hub
-        if eh_producer and messages:
+        if eh_producer and messages and CFG.get("enableEventHub", True):
             try:
                 batch = eh_producer.create_batch()
                 for msg in messages:
@@ -299,6 +348,36 @@ def start_simulation():
                 f["inventoryLevelPercent"] = round(random.uniform(dist["lowRangeMin"], dist["lowRangeMax"]), 1)
             elif did in mid_ids:
                 f["inventoryLevelPercent"] = round(random.uniform(dist["midRangeMin"], dist["midRangeMax"]), 1)
+
+        # ── Apply low-seller rules from config ───────────────────
+        for rule in CFG.get("lowSellers", []):
+            region_alias = rule["regionAlias"]
+            count = rule["count"]
+            # Find all freezers in the target region
+            candidates = [did for did, f in freezers.items()
+                          if did.startswith(region_alias + "-")]
+            random.shuffle(candidates)
+            for did in candidates[:count]:
+                initial_cooldown = random.randint(
+                    rule["sellIntervalMin"], rule["sellIntervalMax"])
+                freezers[did]["isLowSeller"] = True
+                freezers[did]["sellCooldownRemaining"] = initial_cooldown
+                freezers[did]["lowSellerRule"] = rule
+                print(f"  🐌 {did} marked as low-seller "
+                      f"(next sale in {initial_cooldown} cycles)")
+
+        # ── Apply high-seller rules from config ──────────────────
+        for rule in CFG.get("highSellers", []):
+            region_alias = rule["regionAlias"]
+            count = rule["count"]
+            candidates = [did for did, f in freezers.items()
+                          if did.startswith(region_alias + "-")
+                          and not f["isLowSeller"]]
+            random.shuffle(candidates)
+            for did in candidates[:count]:
+                freezers[did]["isHighSeller"] = True
+                freezers[did]["highSellerRule"] = rule
+                print(f"  🔥 {did} marked as high-seller")
 
         now = datetime.now(timezone.utc)
         demo_run_id = f"run-{now.strftime('%Y-%m-%d')}-{now.strftime('%H%M%S')}"

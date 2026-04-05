@@ -1,7 +1,10 @@
 {
+  "enableLocalJsonOutput": false,
+  "enableEventHub": true,
+  "telemetryIntervalSeconds": 1,
+
   "numFreezers": 20,
-  "defaultTemperature": -20.0,
-  "telemetryIntervalSeconds": 20,
+  "defaultTemperature": -20.0,  
 
   "regions": [
     {
@@ -57,15 +60,41 @@
     "restockFillLevel": 100.0,
     "restockWaitCyclesMin": 1,
     "restockWaitCyclesMax": 30,
-    "consoleWarningThreshold": 20.0
+    "consoleWarningThreshold": 20.0,
+    "_comment_doorOpenProbability": "Chance (0-1) a freezer's door is caught open in a given telemetry snapshot. Overridden per lowSellers / highSellers rule. Halved when a low-seller is on cooldown (no sale). Set to 0 when inventory is empty.",
+    "doorOpenProbability": 0.30
   },
 
   "inventoryStartDistribution": {
-    "lowPercent": 0.05,
+    "lowPercent": 0.10,
     "lowRangeMin": 0.0,
     "lowRangeMax": 10.0,
-    "midPercent": 0.05,
+    "midPercent": 0.20,
     "midRangeMin": 15.0,
     "midRangeMax": 31.0
-  }
+  },
+
+  "_comment_lowSellers": "Simulate underperforming freezers: they only register a sale once every sellIntervalMin-sellIntervalMax cycles. Bulk purchases are controlled per rule. 'count' freezers are randomly picked from the given region at simulation start.",
+  "lowSellers": [
+    {
+      "regionAlias": "pqnacoes",
+      "count": 2,
+      "sellIntervalMin": 5,
+      "sellIntervalMax": 10,
+      "allowBulkPurchase": false,
+      "doorOpenProbability": 0.03
+    }
+  ],
+
+  "_comment_highSellers": "Simulate high-traffic freezers: higher depletion per cycle (depletionMin/Max) and boosted bulkPurchaseProbability. 'count' freezers are randomly picked from the given region at simulation start.",
+  "highSellers": [
+    {
+      "regionAlias": "caissodre",
+      "count": 1,
+      "depletionMin": 0.8,
+      "depletionMax": 1.5,
+      "bulkPurchaseProbability": 0.25,
+      "doorOpenProbability": 0.65
+    }
+  ]
 }
