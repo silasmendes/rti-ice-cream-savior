@@ -1,7 +1,7 @@
 {
-  "enableLocalJsonOutput": false,
-  "enableEventHub": false,
-  "telemetryIntervalSeconds": 5,
+  "enableLocalJsonOutput": true,
+  "enableEventHub": true,
+  "telemetryIntervalSeconds": 15,
 
   "numFreezers": 20,
   "defaultTemperature": -20.0,  
@@ -50,7 +50,7 @@
   },
 
   "inventory": {
-    "autoRestock": false,
+    "autoRestock": true,
     "initRangeMin": 40.0,
     "initRangeMax": 100.0,
     "depletionMin": 0.1,

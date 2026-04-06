@@ -148,26 +148,34 @@ def generate_telemetry():
 
             # ── Active restocking phase (door open, no sales) ────
             if restocking_in_progress:
-                restocking_cycles -= 1
-                if restocking_cycles <= 0:
-                    # Restocking complete – fill up and resume normal operation
-                    inv = icfg["restockFillLevel"]
-                    restocking_in_progress = False
-                    restocking_cycles = 0
+                if state["powerState"] == "off":
+                    # Power out – pause restocking (no filling, close door)
+                    state["inventoryLevelPercent"] = round(inv, 1)
+                    state["restockCyclesRemaining"] = restock_remaining
+                    state["restockingInProgress"] = restocking_in_progress
+                    state["restockingCyclesRemaining"] = restocking_cycles
+                    state["doorOpen"] = False
                 else:
-                    # Partially fill during restock
-                    total_duration = icfg.get("restockDurationCyclesMax", 5)
-                    fill_per_cycle = (icfg["restockFillLevel"] - inv) / max(restocking_cycles, 1)
-                    inv += fill_per_cycle * random.uniform(0.6, 1.0)
-                    inv = min(inv, icfg["restockFillLevel"])
+                    restocking_cycles -= 1
+                    if restocking_cycles <= 0:
+                        # Restocking complete – fill up and resume normal operation
+                        inv = icfg["restockFillLevel"]
+                        restocking_in_progress = False
+                        restocking_cycles = 0
+                    else:
+                        # Partially fill during restock
+                        total_duration = icfg.get("restockDurationCyclesMax", 5)
+                        fill_per_cycle = (icfg["restockFillLevel"] - inv) / max(restocking_cycles, 1)
+                        inv += fill_per_cycle * random.uniform(0.6, 1.0)
+                        inv = min(inv, icfg["restockFillLevel"])
 
-                state["inventoryLevelPercent"] = round(inv, 1)
-                state["restockCyclesRemaining"] = restock_remaining
-                state["restockingInProgress"] = restocking_in_progress
-                state["restockingCyclesRemaining"] = restocking_cycles
+                    state["inventoryLevelPercent"] = round(inv, 1)
+                    state["restockCyclesRemaining"] = restock_remaining
+                    state["restockingInProgress"] = restocking_in_progress
+                    state["restockingCyclesRemaining"] = restocking_cycles
 
-                # Door is forced open during restock
-                state["doorOpen"] = True
+                    # Door is forced open during restock
+                    state["doorOpen"] = True
 
             else:
                 # ── Normal operation: sales & restock scheduling ─────
@@ -202,8 +210,8 @@ def generate_telemetry():
 
                 if restock_remaining > 0:
                     restock_remaining -= 1
-                    if restock_remaining == 0:
-                        # Delivery arrived – begin restocking phase
+                    if restock_remaining == 0 and state["powerState"] != "off":
+                        # Delivery arrived & power is on – begin restocking phase
                         restocking_in_progress = True
                         restocking_cycles = random.randint(
                             icfg.get("restockDurationCyclesMin", 3),
@@ -221,7 +229,7 @@ def generate_telemetry():
                             inv -= random.uniform(icfg["bulkPurchaseDropMin"], icfg["bulkPurchaseDropMax"])
                         inv = max(inv, 0.0)
 
-                if icfg.get("autoRestock", True) and inv < icfg["restockThreshold"] and restock_remaining == 0 and not restocking_in_progress:
+                if icfg.get("autoRestock", True) and inv < icfg["restockThreshold"] and restock_remaining == 0 and not restocking_in_progress and state["powerState"] != "off":
                     restock_remaining = random.randint(icfg["restockWaitCyclesMin"], icfg["restockWaitCyclesMax"])
 
                 state["inventoryLevelPercent"] = round(inv, 1)
