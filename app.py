@@ -139,12 +139,24 @@ def generate_telemetry():
 
             state["actualTemperature"] = round(actual, 1)
 
-            # ── Simulate inventory depletion & restocking ────────
+            # ── Spoilage check: ice cream melts above -7 °C ─────
             icfg = CFG["inventory"]
+            spoilage_threshold = icfg.get("spoilageTemperatureThreshold", -7.0)
             inv = state["inventoryLevelPercent"]
             restock_remaining = state["restockCyclesRemaining"]
             restocking_in_progress = state.get("restockingInProgress", False)
             restocking_cycles = state.get("restockingCyclesRemaining", 0)
+
+            if state["actualTemperature"] > spoilage_threshold and inv > 0:
+                print(f"\033[95m🗑️  {device_id} SPOILAGE: temp {state['actualTemperature']}°C > {spoilage_threshold}°C – "
+                      f"inventory discarded ({inv}% → 0%)\033[0m")
+                inv = 0.0
+                # Cancel any active restocking – no point filling a warm freezer
+                if restocking_in_progress:
+                    restocking_in_progress = False
+                    restocking_cycles = 0
+
+            # ── Simulate inventory depletion & restocking ────────
 
             # ── Active restocking phase (door open, no sales) ────
             if restocking_in_progress:

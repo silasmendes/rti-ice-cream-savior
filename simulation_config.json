@@ -51,6 +51,7 @@
 
   "inventory": {
     "autoRestock": true,
+    "spoilageTemperatureThreshold": -7.0,
     "initRangeMin": 40.0,
     "initRangeMax": 100.0,
     "depletionMin": 0.1,
@@ -61,7 +62,7 @@
     "restockThreshold": 20.0,
     "restockFillLevel": 100.0,
     "restockWaitCyclesMin": 1,
-    "restockWaitCyclesMax": 30,
+    "restockWaitCyclesMax": 10,
     "restockDurationCyclesMin": 3,
     "restockDurationCyclesMax": 5,
     "consoleWarningThreshold": 20.0,
