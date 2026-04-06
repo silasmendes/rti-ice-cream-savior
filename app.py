@@ -80,6 +80,7 @@ def build_freezers(cfg):
                 "restockCyclesRemaining": 0,
                 "restockingInProgress": False,
                 "restockingCyclesRemaining": 0,
+                "spoilageCooldownActive": False,
                 "isLowSeller": False,
                 "sellCooldownRemaining": 0,
                 "lowSellerRule": None,
@@ -139,22 +140,32 @@ def generate_telemetry():
 
             state["actualTemperature"] = round(actual, 1)
 
-            # ── Spoilage check: ice cream melts above -7 °C ─────
+            # ── Spoilage check: ice cream melts above threshold ────
             icfg = CFG["inventory"]
             spoilage_threshold = icfg.get("spoilageTemperatureThreshold", -7.0)
             inv = state["inventoryLevelPercent"]
             restock_remaining = state["restockCyclesRemaining"]
             restocking_in_progress = state.get("restockingInProgress", False)
             restocking_cycles = state.get("restockingCyclesRemaining", 0)
+            spoilage_cooldown = state.get("spoilageCooldownActive", False)
 
             if state["actualTemperature"] > spoilage_threshold and inv > 0:
                 print(f"\033[95m🗑️  {device_id} SPOILAGE: temp {state['actualTemperature']}°C > {spoilage_threshold}°C – "
                       f"inventory discarded ({inv}% → 0%)\033[0m")
                 inv = 0.0
+                spoilage_cooldown = True
                 # Cancel any active restocking – no point filling a warm freezer
                 if restocking_in_progress:
                     restocking_in_progress = False
                     restocking_cycles = 0
+
+            # Clear spoilage cooldown once temp returns near default (±2°C)
+            if spoilage_cooldown:
+                default_temp = CFG["defaultTemperature"]
+                if abs(state["actualTemperature"] - default_temp) <= 2.0:
+                    spoilage_cooldown = False
+                    print(f"\033[92m❄️  {device_id} cooled back to {state['actualTemperature']}°C – "
+                          f"restocking allowed again\033[0m")
 
             # ── Simulate inventory depletion & restocking ────────
 
@@ -166,6 +177,7 @@ def generate_telemetry():
                     state["restockCyclesRemaining"] = restock_remaining
                     state["restockingInProgress"] = restocking_in_progress
                     state["restockingCyclesRemaining"] = restocking_cycles
+                    state["spoilageCooldownActive"] = spoilage_cooldown
                     state["doorOpen"] = False
                 else:
                     restocking_cycles -= 1
@@ -185,6 +197,7 @@ def generate_telemetry():
                     state["restockCyclesRemaining"] = restock_remaining
                     state["restockingInProgress"] = restocking_in_progress
                     state["restockingCyclesRemaining"] = restocking_cycles
+                    state["spoilageCooldownActive"] = spoilage_cooldown
 
                     # Door is forced open during restock
                     state["doorOpen"] = True
@@ -223,11 +236,18 @@ def generate_telemetry():
                 if restock_remaining > 0:
                     restock_remaining -= 1
                     if restock_remaining == 0 and state["powerState"] != "off":
-                        # Delivery arrived & power is on – begin restocking phase
-                        restocking_in_progress = True
-                        restocking_cycles = random.randint(
-                            icfg.get("restockDurationCyclesMin", 3),
-                            icfg.get("restockDurationCyclesMax", 5))
+                        if spoilage_cooldown:
+                            # Freezer too warm – retrigger delivery wait
+                            restock_remaining = random.randint(
+                                icfg["restockWaitCyclesMin"], icfg["restockWaitCyclesMax"])
+                            print(f"\033[93m🚚  {device_id} delivery arrived but freezer too warm "
+                                  f"({state['actualTemperature']}°C) – rescheduled in {restock_remaining} cycles\033[0m")
+                        else:
+                            # Delivery arrived & power is on & temp OK – begin restocking phase
+                            restocking_in_progress = True
+                            restocking_cycles = random.randint(
+                                icfg.get("restockDurationCyclesMin", 3),
+                                icfg.get("restockDurationCyclesMax", 5))
                     # Sales still happen while waiting for delivery
                     if can_sell and inv > 0:
                         inv -= random.uniform(dep_min, dep_max)
@@ -241,13 +261,14 @@ def generate_telemetry():
                             inv -= random.uniform(icfg["bulkPurchaseDropMin"], icfg["bulkPurchaseDropMax"])
                         inv = max(inv, 0.0)
 
-                if icfg.get("autoRestock", True) and inv < icfg["restockThreshold"] and restock_remaining == 0 and not restocking_in_progress and state["powerState"] != "off":
+                if icfg.get("autoRestock", True) and inv < icfg["restockThreshold"] and restock_remaining == 0 and not restocking_in_progress and state["powerState"] != "off" and not spoilage_cooldown:
                     restock_remaining = random.randint(icfg["restockWaitCyclesMin"], icfg["restockWaitCyclesMax"])
 
                 state["inventoryLevelPercent"] = round(inv, 1)
                 state["restockCyclesRemaining"] = restock_remaining
                 state["restockingInProgress"] = restocking_in_progress
                 state["restockingCyclesRemaining"] = restocking_cycles
+                state["spoilageCooldownActive"] = spoilage_cooldown
 
                 # ── Simulate door open / close ───────────────────────
                 # Resolve door-open probability: high sellers > default > low sellers
@@ -291,6 +312,7 @@ def generate_telemetry():
                     freezers[device_id]["restockCyclesRemaining"] = state["restockCyclesRemaining"]
                     freezers[device_id]["restockingInProgress"] = state["restockingInProgress"]
                     freezers[device_id]["restockingCyclesRemaining"] = state["restockingCyclesRemaining"]
+                    freezers[device_id]["spoilageCooldownActive"] = state.get("spoilageCooldownActive", False)
                     freezers[device_id]["sellCooldownRemaining"] = state["sellCooldownRemaining"]
                     freezers[device_id]["doorOpen"] = state["doorOpen"]
 
