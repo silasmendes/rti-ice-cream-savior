@@ -82,6 +82,7 @@ main{padding:1.5rem 2rem}
 .bar-fill.inv-fill-danger{background:#ef4444}
 .restock-badge{display:inline-flex;align-items:center;gap:.25rem;margin-top:.35rem;padding:.15rem .5rem;border-radius:999px;font-size:.7rem;font-weight:600;background:#ef444422;color:#fca5a5;border:1px solid #ef444455}
 .restock-badge.hidden{display:none}
+.restock-badge.restocking{background:#3b82f622;color:#93c5fd;border:1px solid #3b82f655}
 
 /* ── God-mode collapsible ──────────────────────────────── */
 .god-mode{margin-top:.6rem;border:1px solid #334155;border-radius:8px;overflow:hidden}
@@ -101,10 +102,6 @@ main{padding:1.5rem 2rem}
   <div class="controls">
     <button class="btn-start" id="btnStart" onclick="startSim()">▶ Start</button>
     <button class="btn-stop"  id="btnStop" onclick="stopSim()" disabled>■ Stop</button>
-    <label>Interval (s)
-      <input type="number" id="intervalInput" min="1" value="60">
-    </label>
-    <button onclick="setInterval_()">Set</button>
     <button class="btn-outage" id="btnOutage" onclick="toggleOutage()">⚡ Regional Power Outage</button>
     <span id="statusBadge" class="status-badge stopped">STOPPED</span>
     <span id="runId" class="run-id"></span>
@@ -195,6 +192,7 @@ function buildInventoryHTML(f) {
         <div class="bar-fill inv-fill-${cls}" style="width:${Math.min(pct,100)}%"></div>
       </div>
       <span class="restock-badge${restock > 0 ? '' : ' hidden'}" id="restock-${f.deviceId}">🚚 Restock in ${restock} cycles</span>
+      <span class="restock-badge${f.restockingInProgress ? ' restocking' : ' hidden'}" id="restocking-${f.deviceId}">📦 Restocking (door open) – ${f.restockingCyclesRemaining ?? 0} cycles left</span>
     </div>`;
 }
 
@@ -211,6 +209,10 @@ function refreshCards(freezers) {
       if (sel && document.activeElement !== sel) sel.value = f.powerState;
       const invInput = card.querySelector('.inv-input');
       if (invInput && document.activeElement !== invInput) invInput.value = Math.round(f.inventoryLevelPercent);
+
+      /* Sync door toggle with actual state */
+      const doorToggle = card.querySelector('.god-mode input[type=checkbox]');
+      if (doorToggle && document.activeElement !== doorToggle) doorToggle.checked = f.doorOpen;
     }
     const actualEl = document.getElementById('actual-' + f.deviceId);
     if (actualEl) {
@@ -237,6 +239,16 @@ function refreshCards(freezers) {
         badge.classList.remove('hidden');
       } else {
         badge.classList.add('hidden');
+      }
+
+      const restockingBadge = document.getElementById('restocking-' + f.deviceId);
+      if (restockingBadge) {
+        if (f.restockingInProgress) {
+          restockingBadge.textContent = '📦 Restocking (door open) – ' + (f.restockingCyclesRemaining ?? 0) + ' cycles left';
+          restockingBadge.className = 'restock-badge restocking';
+        } else {
+          restockingBadge.className = 'restock-badge hidden';
+        }
       }
     }
   });
@@ -267,16 +279,6 @@ async function startSim() {
 async function stopSim() {
   await fetch('/api/stop', {method: 'POST'});
   updateUI(false, null);
-}
-
-async function setInterval_() {
-  const val = parseInt(document.getElementById('intervalInput').value, 10);
-  if (val < 1) return;
-  await fetch('/api/interval', {
-    method: 'PATCH',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({interval: val})
-  });
 }
 
 let outageActive = false;
@@ -313,10 +315,6 @@ async function poll() {
       initialized = true;
     } else {
       refreshCards(state.freezers);
-    }
-    const intervalEl = document.getElementById('intervalInput');
-    if (document.activeElement !== intervalEl) {
-      intervalEl.value = state.interval;
     }
     updateUI(state.running, state.demoRunId);
   } catch(e) { /* ignore transient errors */ }

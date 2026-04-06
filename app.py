@@ -78,6 +78,8 @@ def build_freezers(cfg):
                     cfg["inventory"]["initRangeMin"],
                     cfg["inventory"]["initRangeMax"]), 1),
                 "restockCyclesRemaining": 0,
+                "restockingInProgress": False,
+                "restockingCyclesRemaining": 0,
                 "isLowSeller": False,
                 "sellCooldownRemaining": 0,
                 "lowSellerRule": None,
@@ -120,11 +122,15 @@ def generate_telemetry():
             actual = state["actualTemperature"]
 
             tcfg = CFG["temperature"]
+            restocking_now = state.get("restockingInProgress", False)
             if state["powerState"] == "off":
                 # No cooling – warm toward ambient (~25 °C)
                 actual += random.uniform(tcfg["powerOffWarmingMin"], tcfg["powerOffWarmingMax"])
+            elif restocking_now:
+                # Restocking – door wide open for extended time, fast warming
+                actual += random.uniform(tcfg.get("restockWarmingMin", 1.2), tcfg.get("restockWarmingMax", 2.5))
             elif state["doorOpen"]:
-                # Door open – slow warming
+                # Door open – slow warming (brief customer access)
                 actual += random.uniform(tcfg["doorOpenWarmingMin"], tcfg["doorOpenWarmingMax"])
             else:
                 # Normal compressor cycle – drift toward set point ± noise
@@ -137,70 +143,105 @@ def generate_telemetry():
             icfg = CFG["inventory"]
             inv = state["inventoryLevelPercent"]
             restock_remaining = state["restockCyclesRemaining"]
+            restocking_in_progress = state.get("restockingInProgress", False)
+            restocking_cycles = state.get("restockingCyclesRemaining", 0)
 
-            # Low-seller gate: these freezers only sell once every N cycles
-            is_low_seller = state.get("isLowSeller", False)
-            sell_cooldown = state.get("sellCooldownRemaining", 0)
-            low_rule = state.get("lowSellerRule")
-            can_sell = True
-            if is_low_seller:
-                if sell_cooldown > 0:
-                    sell_cooldown -= 1
-                    can_sell = False          # no sale this cycle
-                else:
-                    # Sale happens this cycle – reset cooldown for next sale
-                    sell_cooldown = random.randint(
-                        low_rule["sellIntervalMin"], low_rule["sellIntervalMax"])
-                    can_sell = True
-            state["sellCooldownRemaining"] = sell_cooldown
-
-            # Resolve per-cycle depletion & bulk-purchase parameters
-            is_high_seller = state.get("isHighSeller", False)
-            high_rule = state.get("highSellerRule")
-
-            dep_min = high_rule["depletionMin"] if is_high_seller else icfg["depletionMin"]
-            dep_max = high_rule["depletionMax"] if is_high_seller else icfg["depletionMax"]
-            bulk_prob = high_rule["bulkPurchaseProbability"] if is_high_seller else icfg["bulkPurchaseProbability"]
-            # Low sellers with allowBulkPurchase=false never get bulk drops
-            allow_bulk = True
-            if is_low_seller and not low_rule.get("allowBulkPurchase", True):
-                allow_bulk = False
-
-            if restock_remaining > 0:
-                restock_remaining -= 1
-                if restock_remaining == 0:
+            # ── Active restocking phase (door open, no sales) ────
+            if restocking_in_progress:
+                restocking_cycles -= 1
+                if restocking_cycles <= 0:
+                    # Restocking complete – fill up and resume normal operation
                     inv = icfg["restockFillLevel"]
-                elif can_sell and inv > 0:
-                    inv -= random.uniform(dep_min, dep_max)
-                    if allow_bulk and random.random() < bulk_prob:
-                        inv -= random.uniform(icfg["bulkPurchaseDropMin"], icfg["bulkPurchaseDropMax"])
-                    inv = max(inv, 0.0)
+                    restocking_in_progress = False
+                    restocking_cycles = 0
+                else:
+                    # Partially fill during restock
+                    total_duration = icfg.get("restockDurationCyclesMax", 5)
+                    fill_per_cycle = (icfg["restockFillLevel"] - inv) / max(restocking_cycles, 1)
+                    inv += fill_per_cycle * random.uniform(0.6, 1.0)
+                    inv = min(inv, icfg["restockFillLevel"])
+
+                state["inventoryLevelPercent"] = round(inv, 1)
+                state["restockCyclesRemaining"] = restock_remaining
+                state["restockingInProgress"] = restocking_in_progress
+                state["restockingCyclesRemaining"] = restocking_cycles
+
+                # Door is forced open during restock
+                state["doorOpen"] = True
+
             else:
-                if can_sell and inv > 0:
-                    inv -= random.uniform(dep_min, dep_max)
-                    if allow_bulk and random.random() < bulk_prob:
-                        inv -= random.uniform(icfg["bulkPurchaseDropMin"], icfg["bulkPurchaseDropMax"])
-                    inv = max(inv, 0.0)
+                # ── Normal operation: sales & restock scheduling ─────
 
-            if icfg.get("autoRestock", True) and inv < icfg["restockThreshold"] and restock_remaining == 0:
-                restock_remaining = random.randint(icfg["restockWaitCyclesMin"], icfg["restockWaitCyclesMax"])
+                # Low-seller gate: these freezers only sell once every N cycles
+                is_low_seller = state.get("isLowSeller", False)
+                sell_cooldown = state.get("sellCooldownRemaining", 0)
+                low_rule = state.get("lowSellerRule")
+                can_sell = True
+                if is_low_seller:
+                    if sell_cooldown > 0:
+                        sell_cooldown -= 1
+                        can_sell = False          # no sale this cycle
+                    else:
+                        # Sale happens this cycle – reset cooldown for next sale
+                        sell_cooldown = random.randint(
+                            low_rule["sellIntervalMin"], low_rule["sellIntervalMax"])
+                        can_sell = True
+                state["sellCooldownRemaining"] = sell_cooldown
 
-            state["inventoryLevelPercent"] = round(inv, 1)
-            state["restockCyclesRemaining"] = restock_remaining
+                # Resolve per-cycle depletion & bulk-purchase parameters
+                is_high_seller = state.get("isHighSeller", False)
+                high_rule = state.get("highSellerRule")
 
-            # ── Simulate door open / close ───────────────────────
-            # Resolve door-open probability: high sellers > default > low sellers
-            if inv <= 0:
-                door_prob = 0.0                          # empty freezer – no customers
-            elif is_high_seller:
-                door_prob = high_rule.get("doorOpenProbability", icfg["doorOpenProbability"])
-            elif is_low_seller:
-                base = low_rule.get("doorOpenProbability", icfg["doorOpenProbability"])
-                # When on cooldown (no active sale), halve the already-low probability
-                door_prob = base * 0.5 if not can_sell else base
-            else:
-                door_prob = icfg["doorOpenProbability"]
-            state["doorOpen"] = random.random() < door_prob
+                dep_min = high_rule["depletionMin"] if is_high_seller else icfg["depletionMin"]
+                dep_max = high_rule["depletionMax"] if is_high_seller else icfg["depletionMax"]
+                bulk_prob = high_rule["bulkPurchaseProbability"] if is_high_seller else icfg["bulkPurchaseProbability"]
+                # Low sellers with allowBulkPurchase=false never get bulk drops
+                allow_bulk = True
+                if is_low_seller and not low_rule.get("allowBulkPurchase", True):
+                    allow_bulk = False
+
+                if restock_remaining > 0:
+                    restock_remaining -= 1
+                    if restock_remaining == 0:
+                        # Delivery arrived – begin restocking phase
+                        restocking_in_progress = True
+                        restocking_cycles = random.randint(
+                            icfg.get("restockDurationCyclesMin", 3),
+                            icfg.get("restockDurationCyclesMax", 5))
+                    # Sales still happen while waiting for delivery
+                    if can_sell and inv > 0:
+                        inv -= random.uniform(dep_min, dep_max)
+                        if allow_bulk and random.random() < bulk_prob:
+                            inv -= random.uniform(icfg["bulkPurchaseDropMin"], icfg["bulkPurchaseDropMax"])
+                        inv = max(inv, 0.0)
+                else:
+                    if can_sell and inv > 0:
+                        inv -= random.uniform(dep_min, dep_max)
+                        if allow_bulk and random.random() < bulk_prob:
+                            inv -= random.uniform(icfg["bulkPurchaseDropMin"], icfg["bulkPurchaseDropMax"])
+                        inv = max(inv, 0.0)
+
+                if icfg.get("autoRestock", True) and inv < icfg["restockThreshold"] and restock_remaining == 0 and not restocking_in_progress:
+                    restock_remaining = random.randint(icfg["restockWaitCyclesMin"], icfg["restockWaitCyclesMax"])
+
+                state["inventoryLevelPercent"] = round(inv, 1)
+                state["restockCyclesRemaining"] = restock_remaining
+                state["restockingInProgress"] = restocking_in_progress
+                state["restockingCyclesRemaining"] = restocking_cycles
+
+                # ── Simulate door open / close ───────────────────────
+                # Resolve door-open probability: high sellers > default > low sellers
+                if inv <= 0:
+                    door_prob = 0.0                          # empty freezer – no customers
+                elif is_high_seller:
+                    door_prob = high_rule.get("doorOpenProbability", icfg["doorOpenProbability"])
+                elif is_low_seller:
+                    base = low_rule.get("doorOpenProbability", icfg["doorOpenProbability"])
+                    # When on cooldown (no active sale), halve the already-low probability
+                    door_prob = base * 0.5 if not can_sell else base
+                else:
+                    door_prob = icfg["doorOpenProbability"]
+                state["doorOpen"] = random.random() < door_prob
 
             if inv < icfg["consoleWarningThreshold"]:
                 print(f"\033[91m⚠️  {device_id} inventory LOW: {state['inventoryLevelPercent']}%"
@@ -228,6 +269,8 @@ def generate_telemetry():
                     freezers[device_id]["actualTemperature"] = state["actualTemperature"]
                     freezers[device_id]["inventoryLevelPercent"] = state["inventoryLevelPercent"]
                     freezers[device_id]["restockCyclesRemaining"] = state["restockCyclesRemaining"]
+                    freezers[device_id]["restockingInProgress"] = state["restockingInProgress"]
+                    freezers[device_id]["restockingCyclesRemaining"] = state["restockingCyclesRemaining"]
                     freezers[device_id]["sellCooldownRemaining"] = state["sellCooldownRemaining"]
                     freezers[device_id]["doorOpen"] = state["doorOpen"]
 

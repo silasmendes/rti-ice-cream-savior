@@ -1,7 +1,7 @@
 {
   "enableLocalJsonOutput": false,
-  "enableEventHub": true,
-  "telemetryIntervalSeconds": 1,
+  "enableEventHub": false,
+  "telemetryIntervalSeconds": 5,
 
   "numFreezers": 20,
   "defaultTemperature": -20.0,  
@@ -42,6 +42,8 @@
     "powerOffWarmingMax": 1.0,
     "doorOpenWarmingMin": 0.3,
     "doorOpenWarmingMax": 0.8,
+    "restockWarmingMin": 1.2,
+    "restockWarmingMax": 2.5,
     "compressorCorrectionFactor": 0.3,
     "noiseMin": -0.6,
     "noiseMax": 0.6
@@ -60,6 +62,8 @@
     "restockFillLevel": 100.0,
     "restockWaitCyclesMin": 1,
     "restockWaitCyclesMax": 30,
+    "restockDurationCyclesMin": 3,
+    "restockDurationCyclesMax": 5,
     "consoleWarningThreshold": 20.0,
     "_comment_doorOpenProbability": "Chance (0-1) a freezer's door is caught open in a given telemetry snapshot. Overridden per lowSellers / highSellers rule. Halved when a low-seller is on cooldown (no sale). Set to 0 when inventory is empty.",
     "doorOpenProbability": 0.30
@@ -94,7 +98,7 @@
       "depletionMin": 0.8,
       "depletionMax": 1.5,
       "bulkPurchaseProbability": 0.25,
-      "doorOpenProbability": 0.65
+      "doorOpenProbability": 0.35
     }
   ]
 }
