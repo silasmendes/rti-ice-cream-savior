@@ -125,6 +125,18 @@ Starts telemetry generation for all freezers. On each start:
 
 Stops the background telemetry thread. No more messages are generated until the next start. The status badge switches to **STOPPED** (red).
 
+### Late-Arrival Simulation
+
+Use **Simulate Late Arrival** to mimic a temporary disconnection between the app and Event Hub:
+
+- While active, telemetry continues to be generated and saved as local JSON, but Event Hub delivery is paused.
+- The dashboard shows how many messages are queued for delayed delivery.
+- A live `MM:SS` timer shows how long late-arrival mode has been active and remains accurate after a dashboard refresh.
+- Select **Resume Event Hub** to send all queued messages before normal delivery resumes.
+- Delayed messages retain their original timestamps, sequence numbers, message IDs, and run IDs.
+
+The delayed-message queue is held in application memory. Stopping a simulation does not clear it, but stopping or restarting the Flask process discards any messages that have not been released.
+
 ### Interval Configuration
 
 - **Input field** — set the telemetry interval in seconds (minimum: 1)
@@ -135,6 +147,8 @@ Stops the background telemetry thread. No more messages are generated until the 
 
 - **Status badge** — green `RUNNING` or red `STOPPED`
 - **Run ID** — displays the current `demoRunId` while a simulation is active
+- **Late-arrival queue** — displays the number of messages waiting for Event Hub delivery
+- **Late-arrival timer** — displays elapsed time since delayed delivery was enabled
 
 ## REST API
 
@@ -143,8 +157,11 @@ Stops the background telemetry thread. No more messages are generated until the 
 | `GET`   | `/api/state`                | Full state: all freezers, run info   |
 | `PATCH` | `/api/freezer/<device_id>`  | Update a freezer's properties        |
 | `PATCH` | `/api/interval`             | Set the telemetry interval           |
+| `POST`  | `/api/late-arrival`         | Enable delayed delivery or flush queued messages |
 | `POST`  | `/api/start`                | Start a new simulation run           |
 | `POST`  | `/api/stop`                 | Stop the current simulation          |
+
+Set late-arrival mode with a JSON body containing `{"active": true}` or `{"active": false}`. The endpoint returns the active state and queued message count. Disabling the mode waits for queued Event Hub messages to flush; if delivery fails, the unsent messages remain queued and the mode stays active.
 
 ## Simulation Configuration
 

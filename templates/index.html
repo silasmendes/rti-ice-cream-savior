@@ -25,6 +25,15 @@ button{padding:.45rem 1.1rem;border:none;border-radius:6px;font-size:.85rem;font
 .btn-outage:hover{background:#d97706}
 .btn-outage.active{background:#dc2626;color:#fff}
 .btn-outage.active:hover{background:#b91c1c}
+.btn-late{background:#0ea5e9;color:#082f49}
+.btn-late:hover{background:#0284c7;color:#fff}
+.btn-late.active{background:#f59e0b;color:#1e293b}
+.btn-late.active:hover{background:#d97706}
+.btn-late:disabled{opacity:.45;cursor:not-allowed}
+.late-count,.late-duration{padding:.3rem .6rem;border-radius:999px;font-size:.72rem;font-weight:600;white-space:nowrap}
+.late-count{background:#f59e0b22;color:#fbbf24;border:1px solid #f59e0b55}
+.late-duration{background:#0ea5e922;color:#38bdf8;border:1px solid #0ea5e955;font-family:monospace}
+.late-count.hidden,.late-duration.hidden{display:none}
 .status-badge{padding:.3rem .75rem;border-radius:999px;font-size:.75rem;font-weight:600}
 .status-badge.running{background:#22c55e22;color:#4ade80;border:1px solid #22c55e55}
 .status-badge.stopped{background:#ef444422;color:#f87171;border:1px solid #ef444455}
@@ -103,6 +112,9 @@ main{padding:1.5rem 2rem}
     <button class="btn-start" id="btnStart" onclick="startSim()">▶ Start</button>
     <button class="btn-stop"  id="btnStop" onclick="stopSim()" disabled>■ Stop</button>
     <button class="btn-outage" id="btnOutage" onclick="toggleOutage()">⚡ Regional Power Outage</button>
+    <button class="btn-late" id="btnLateArrival" onclick="toggleLateArrival()" aria-pressed="false">⏱ Simulate Late Arrival</button>
+    <span class="late-count hidden" id="lateArrivalCount">0 queued</span>
+    <span class="late-duration hidden" id="lateArrivalDuration" role="timer" aria-label="Late arrival duration">00:00</span>
     <span id="statusBadge" class="status-badge stopped">STOPPED</span>
     <span id="runId" class="run-id"></span>
   </div>
@@ -294,6 +306,74 @@ async function toggleOutage() {
   btn.textContent = outageActive ? '⚡ Restore Power' : '⚡ Power Outage';
 }
 
+let lateArrivalActive = false;
+let lateArrivalQueuedCount = 0;
+let lateArrivalStartedAt = null;
+let lateArrivalBusy = false;
+
+async function toggleLateArrival() {
+  const requestedState = !lateArrivalActive;
+  lateArrivalBusy = true;
+  updateLateArrivalUI(
+    lateArrivalActive,
+    lateArrivalQueuedCount,
+    true,
+    lateArrivalStartedAt
+  );
+
+  try {
+    const res = await fetch('/api/late-arrival', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({active: requestedState})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Unable to update late-arrival simulation');
+    lateArrivalActive = data.active;
+    updateLateArrivalUI(data.active, data.queuedCount, true, data.startedAt);
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    lateArrivalBusy = false;
+    await poll();
+  }
+}
+
+function updateLateArrivalUI(active, queuedCount, eventHubConfigured, startedAt) {
+  lateArrivalActive = active;
+  lateArrivalQueuedCount = queuedCount;
+  lateArrivalStartedAt = startedAt;
+  const btn = document.getElementById('btnLateArrival');
+  btn.disabled = lateArrivalBusy || !eventHubConfigured;
+  btn.classList.toggle('active', active);
+  btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  btn.title = eventHubConfigured ? '' : 'Configure and enable Event Hub to use this simulation';
+  btn.textContent = lateArrivalBusy
+    ? (active ? '↗ Releasing Events...' : '⏱ Updating...')
+    : (active ? '↗ Resume Event Hub' : '⏱ Simulate Late Arrival');
+
+  const count = document.getElementById('lateArrivalCount');
+  count.textContent = queuedCount + ' queued';
+  count.classList.toggle('hidden', !active && queuedCount === 0);
+  renderLateArrivalDuration();
+}
+
+function renderLateArrivalDuration() {
+  const timer = document.getElementById('lateArrivalDuration');
+  const startTime = Date.parse(lateArrivalStartedAt);
+  if (!lateArrivalActive || Number.isNaN(startTime)) {
+    timer.classList.add('hidden');
+    timer.textContent = '00:00';
+    return;
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  timer.textContent = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+  timer.classList.remove('hidden');
+}
+
 function updateUI(running, runId) {
   document.getElementById('btnStart').disabled = running;
   document.getElementById('btnStop').disabled  = !running;
@@ -317,11 +397,18 @@ async function poll() {
       refreshCards(state.freezers);
     }
     updateUI(state.running, state.demoRunId);
+    updateLateArrivalUI(
+      state.lateArrivalActive,
+      state.lateArrivalQueuedCount,
+      state.eventHubConfigured,
+      state.lateArrivalStartedAt
+    );
   } catch(e) { /* ignore transient errors */ }
 }
 
 poll();
 setInterval(poll, 3000);
+setInterval(renderLateArrivalDuration, 1000);
 </script>
 </body>
 </html>

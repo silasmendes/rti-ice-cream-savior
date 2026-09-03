@@ -94,10 +94,39 @@ def build_freezers(cfg):
 freezers = build_freezers(CFG)
 
 sim_lock = threading.Lock()
+eventhub_lock = threading.Lock()
 sim_running = False
 sim_thread = None
 sim_interval = CFG["telemetryIntervalSeconds"]
 demo_run_id = None
+late_arrival_active = False
+late_arrival_started_at = None
+late_arrival_messages = []
+
+
+def send_eventhub_batch(messages):
+    """Send as many messages as fit in one Event Hub batch."""
+    batch = eh_producer.create_batch()
+    batch_size = 0
+    for message in messages:
+        try:
+            batch.add(EventData(json.dumps(message)))
+        except ValueError:
+            if batch_size == 0:
+                raise
+            break
+        batch_size += 1
+
+    eh_producer.send_batch(batch)
+    return batch_size
+
+
+def send_eventhub_messages(messages):
+    """Send messages in Event Hub-sized batches."""
+    sent_count = 0
+    while sent_count < len(messages):
+        sent_count += send_eventhub_batch(messages[sent_count:])
+    return sent_count
 
 
 def generate_telemetry():
@@ -325,16 +354,23 @@ def generate_telemetry():
 
             messages.append(message)
 
-        # Send batch to Event Hub
+        # Send to Event Hub, or hold messages to simulate a disconnected producer.
         if eh_producer and messages and CFG.get("enableEventHub", True):
-            try:
-                batch = eh_producer.create_batch()
-                for msg in messages:
-                    batch.add(EventData(json.dumps(msg)))
-                eh_producer.send_batch(batch)
-                print(f"[EventHub] Sent {len(messages)} events")
-            except Exception as exc:
-                print(f"[EventHub] Error sending batch: {exc}")
+            with eventhub_lock:
+                with sim_lock:
+                    hold_messages = late_arrival_active
+                    if hold_messages:
+                        late_arrival_messages.extend(messages)
+                        queued_count = len(late_arrival_messages)
+
+                if hold_messages:
+                    print(f"[EventHub] Late arrival active: {queued_count} events queued")
+                else:
+                    try:
+                        sent_count = send_eventhub_messages(messages)
+                        print(f"[EventHub] Sent {sent_count} events")
+                    except Exception as exc:
+                        print(f"[EventHub] Error sending batch: {exc}")
 
         # Sleep in small increments so we can stop quickly
         elapsed = 0.0
@@ -361,6 +397,12 @@ def get_state():
                 "running": sim_running,
                 "interval": sim_interval,
                 "demoRunId": demo_run_id,
+                "eventHubConfigured": bool(
+                    eh_producer and CFG.get("enableEventHub", True)
+                ),
+                "lateArrivalActive": late_arrival_active,
+                "lateArrivalStartedAt": late_arrival_started_at,
+                "lateArrivalQueuedCount": len(late_arrival_messages),
             }
         )
 
@@ -391,6 +433,60 @@ def power_outage():
         for f in freezers.values():
             f["powerState"] = state
     return jsonify({"powerState": state})
+
+
+@app.route("/api/late-arrival", methods=["POST"])
+def set_late_arrival():
+    global late_arrival_active, late_arrival_started_at
+    data = request.get_json(force=True)
+    active = bool(data.get("active"))
+
+    if active and (not eh_producer or not CFG.get("enableEventHub", True)):
+        return jsonify({"error": "Event Hub is not configured or is disabled"}), 503
+
+    with eventhub_lock:
+        if active:
+            with sim_lock:
+                if not late_arrival_active:
+                    late_arrival_started_at = datetime.now(timezone.utc).isoformat()
+                late_arrival_active = True
+                queued_count = len(late_arrival_messages)
+                started_at = late_arrival_started_at
+            return jsonify({
+                "active": True,
+                "startedAt": started_at,
+                "queuedCount": queued_count,
+            })
+
+        if not eh_producer:
+            return jsonify({"error": "Event Hub is not configured"}), 503
+
+        try:
+            while True:
+                with sim_lock:
+                    pending_messages = list(late_arrival_messages)
+                if not pending_messages:
+                    with sim_lock:
+                        late_arrival_active = False
+                        late_arrival_started_at = None
+                    break
+
+                sent_count = send_eventhub_batch(pending_messages)
+                with sim_lock:
+                    del late_arrival_messages[:sent_count]
+                print(f"[EventHub] Flushed {sent_count} late-arrival events")
+        except Exception as exc:
+            print(f"[EventHub] Error flushing late-arrival events: {exc}")
+            with sim_lock:
+                queued_count = len(late_arrival_messages)
+            return jsonify({
+                "error": "Unable to flush late-arrival events",
+                "active": True,
+                "startedAt": late_arrival_started_at,
+                "queuedCount": queued_count,
+            }), 502
+
+    return jsonify({"active": False, "startedAt": None, "queuedCount": 0})
 
 
 @app.route("/api/interval", methods=["PATCH"])
