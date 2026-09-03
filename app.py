@@ -73,6 +73,7 @@ def build_freezers(cfg):
                 "actualTemperature": cfg["defaultTemperature"],
                 "doorOpen": False,
                 "powerState": "on",
+                "godMode": False,
                 "sequenceNumber": 0,
                 "inventoryLevelPercent": round(random.uniform(
                     cfg["inventory"]["initRangeMin"],
@@ -146,6 +147,7 @@ def generate_telemetry():
         messages = []
         for device_id, state in snapshot.items():
             state["sequenceNumber"] += 1
+            god_mode = state.get("godMode", False)
 
             # ── Simulate realistic temperature fluctuation ───────
             target = state["temperature"]
@@ -178,7 +180,7 @@ def generate_telemetry():
             restocking_cycles = state.get("restockingCyclesRemaining", 0)
             spoilage_cooldown = state.get("spoilageCooldownActive", False)
 
-            if state["actualTemperature"] > spoilage_threshold and inv > 0:
+            if not god_mode and state["actualTemperature"] > spoilage_threshold and inv > 0:
                 print(f"\033[95m🗑️  {device_id} SPOILAGE: temp {state['actualTemperature']}°C > {spoilage_threshold}°C – "
                       f"inventory discarded ({inv}% → 0%)\033[0m")
                 inv = 0.0
@@ -189,7 +191,7 @@ def generate_telemetry():
                     restocking_cycles = 0
 
             # Clear spoilage cooldown once temp returns near default (±2°C)
-            if spoilage_cooldown:
+            if not god_mode and spoilage_cooldown:
                 default_temp = CFG["defaultTemperature"]
                 if abs(state["actualTemperature"] - default_temp) <= 2.0:
                     spoilage_cooldown = False
@@ -313,6 +315,17 @@ def generate_telemetry():
                     door_prob = icfg["doorOpenProbability"]
                 state["doorOpen"] = random.random() < door_prob
 
+            # A freezer in God Mode is controlled only by the operator. Re-read
+            # the live state so a manual change made during this tick wins too.
+            with sim_lock:
+                current_state = freezers.get(device_id)
+                if current_state and current_state.get("godMode", False):
+                    sequence_number = state["sequenceNumber"]
+                    state = dict(current_state)
+                    state["sequenceNumber"] = sequence_number
+                    target = state["temperature"]
+                    inv = state["inventoryLevelPercent"]
+
             if inv < icfg["consoleWarningThreshold"]:
                 print(f"\033[91m⚠️  {device_id} inventory LOW: {state['inventoryLevelPercent']}%"
                       f"  (restock in {restock_remaining} cycles)\033[0m")
@@ -336,14 +349,15 @@ def generate_telemetry():
             with sim_lock:
                 if device_id in freezers:
                     freezers[device_id]["sequenceNumber"] = state["sequenceNumber"]
-                    freezers[device_id]["actualTemperature"] = state["actualTemperature"]
-                    freezers[device_id]["inventoryLevelPercent"] = state["inventoryLevelPercent"]
-                    freezers[device_id]["restockCyclesRemaining"] = state["restockCyclesRemaining"]
-                    freezers[device_id]["restockingInProgress"] = state["restockingInProgress"]
-                    freezers[device_id]["restockingCyclesRemaining"] = state["restockingCyclesRemaining"]
-                    freezers[device_id]["spoilageCooldownActive"] = state.get("spoilageCooldownActive", False)
-                    freezers[device_id]["sellCooldownRemaining"] = state["sellCooldownRemaining"]
-                    freezers[device_id]["doorOpen"] = state["doorOpen"]
+                    if not freezers[device_id].get("godMode", False):
+                        freezers[device_id]["actualTemperature"] = state["actualTemperature"]
+                        freezers[device_id]["inventoryLevelPercent"] = state["inventoryLevelPercent"]
+                        freezers[device_id]["restockCyclesRemaining"] = state["restockCyclesRemaining"]
+                        freezers[device_id]["restockingInProgress"] = state["restockingInProgress"]
+                        freezers[device_id]["restockingCyclesRemaining"] = state["restockingCyclesRemaining"]
+                        freezers[device_id]["spoilageCooldownActive"] = state.get("spoilageCooldownActive", False)
+                        freezers[device_id]["sellCooldownRemaining"] = state["sellCooldownRemaining"]
+                        freezers[device_id]["doorOpen"] = state["doorOpen"]
 
             if CFG.get("enableLocalJsonOutput", True):
                 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
@@ -413,8 +427,18 @@ def update_freezer(device_id):
         if device_id not in freezers:
             return jsonify({"error": "Unknown device"}), 404
         data = request.get_json(force=True)
+        if "godMode" in data:
+            was_god_mode = freezers[device_id].get("godMode", False)
+            god_mode = bool(data["godMode"])
+            freezers[device_id]["godMode"] = god_mode
+            if was_god_mode and not god_mode:
+                freezers[device_id]["doorOpen"] = False
+                freezers[device_id]["powerState"] = "on"
         if "temperature" in data:
-            freezers[device_id]["temperature"] = float(data["temperature"])
+            temperature = float(data["temperature"])
+            freezers[device_id]["temperature"] = temperature
+            if freezers[device_id].get("godMode", False):
+                freezers[device_id]["actualTemperature"] = temperature
         if "doorOpen" in data:
             freezers[device_id]["doorOpen"] = bool(data["doorOpen"])
         if "powerState" in data:
@@ -431,7 +455,8 @@ def power_outage():
     state = "off" if data.get("outage") else "on"
     with sim_lock:
         for f in freezers.values():
-            f["powerState"] = state
+            if not f.get("godMode", False):
+                f["powerState"] = state
     return jsonify({"powerState": state})
 
 

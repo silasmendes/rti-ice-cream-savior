@@ -49,7 +49,7 @@ The system simulates **25 freezers** (`freezer-001` to `freezer-025`). Each free
 | `doorOpen`    | boolean         | false     |
 | `powerState`  | `"on"` / `"off"` | `"on"` |
 
-All properties can be changed per-freezer directly from the dashboard, even while a simulation is running.
+All properties can be changed per-freezer from the dashboard while God Mode is enabled, even while a simulation is running.
 
 ## Telemetry Message Format
 
@@ -112,6 +112,17 @@ The main area displays a responsive grid of 30 cards — one per freezer. Each c
 - **Sequence counter** — shows the current `sequenceNumber` for the device
 - **Inventory bar** — color-coded gauge (green/yellow/red) with percentage and 🚚 restock badge
 
+### God Mode
+
+Expand a freezer's **God Mode** panel and enable its toggle to take manual control of that freezer. While enabled:
+
+- Temperature changes set both the target and actual emitted temperature immediately.
+- Door, power, temperature, and inventory remain at the selected values across simulation ticks.
+- Automatic sales, restocking, temperature drift, door changes, and regional power outages cannot overwrite the freezer.
+- Other freezers continue running automatically.
+
+Disable God Mode to return that freezer to normal simulation behavior. Manual controls are disabled when God Mode is off.
+
 ### ▶ Start Simulation
 
 Starts telemetry generation for all freezers. On each start:
@@ -162,6 +173,8 @@ The delayed-message queue is held in application memory. Stopping a simulation d
 | `POST`  | `/api/stop`                 | Stop the current simulation          |
 
 Set late-arrival mode with a JSON body containing `{"active": true}` or `{"active": false}`. The endpoint returns the active state and queued message count. Disabling the mode waits for queued Event Hub messages to flush; if delivery fails, the unsent messages remain queued and the mode stays active.
+
+Set per-freezer God Mode through the freezer PATCH endpoint with `{"godMode": true}` or `{"godMode": false}`. The same request can include `temperature`, `doorOpen`, `powerState`, and `inventoryLevelPercent`.
 
 ## Simulation Configuration
 

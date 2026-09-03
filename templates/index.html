@@ -101,6 +101,10 @@ main{padding:1.5rem 2rem}
 .god-mode[open] summary::before{transform:rotate(90deg)}
 .god-mode .gm-body{padding:.5rem .65rem;display:flex;flex-direction:column;gap:.5rem;background:#13192688}
 .god-mode .gm-body .prop{display:flex;align-items:center;justify-content:space-between;font-size:.82rem}
+.god-mode.active{border-color:#f59e0b}
+.god-mode.active summary{background:#f59e0b18}
+.god-mode input:disabled,.god-mode select:disabled{opacity:.45;cursor:not-allowed}
+.gm-enabled{color:#fbbf24;font-weight:700}
 .inv-input{width:4.5rem;padding:.2rem .4rem;border:1px solid #475569;border-radius:4px;background:#0f172a;color:#e2e8f0;font-size:.82rem;text-align:right}
 </style>
 </head>
@@ -146,25 +150,35 @@ function buildCards(freezers) {
         </div>
       </div>
       ${buildInventoryHTML(f)}
-      <details class="god-mode">
+      <details class="god-mode${f.godMode ? ' active' : ''}">
         <summary>⚡ God Mode</summary>
         <div class="gm-body">
           <div class="prop">
+            <span class="prop-label gm-enabled">Enabled</span>
+            <label class="toggle">
+              <input class="god-mode-toggle" type="checkbox" ${f.godMode ? 'checked' : ''}
+                     data-device="${f.deviceId}" onchange="setGodMode(this)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="prop">
             <span class="prop-label">Set °C</span>
             <input class="temp-input" type="number" step="0.5" value="${f.temperature}"
-                   data-device="${f.deviceId}" onchange="patchFreezer(this.dataset.device, {temperature: parseFloat(this.value)})">
+                   data-god-control data-device="${f.deviceId}" ${f.godMode ? '' : 'disabled'}
+                   onchange="patchFreezer(this.dataset.device, {temperature: parseFloat(this.value)})">
           </div>
           <div class="prop">
             <span class="prop-label">Door</span>
             <label class="toggle">
-              <input type="checkbox" ${f.doorOpen ? 'checked' : ''}
-                     data-device="${f.deviceId}" onchange="patchFreezer(this.dataset.device, {doorOpen: this.checked})">
+              <input class="door-toggle" type="checkbox" ${f.doorOpen ? 'checked' : ''}
+                data-god-control data-device="${f.deviceId}" ${f.godMode ? '' : 'disabled'}
+                onchange="patchFreezer(this.dataset.device, {doorOpen: this.checked})">
               <span class="slider"></span>
             </label>
           </div>
           <div class="prop">
             <span class="prop-label">Power</span>
-            <select class="power-select" data-device="${f.deviceId}"
+                <select class="power-select" data-god-control data-device="${f.deviceId}" ${f.godMode ? '' : 'disabled'}
                     onchange="patchFreezer(this.dataset.device, {powerState: this.value})">
               <option value="on"  ${f.powerState === 'on'  ? 'selected' : ''}>ON</option>
               <option value="off" ${f.powerState === 'off' ? 'selected' : ''}>OFF</option>
@@ -173,7 +187,8 @@ function buildCards(freezers) {
           <div class="prop">
             <span class="prop-label">Inventory %</span>
             <input class="inv-input" type="number" step="1" min="0" max="100" value="${Math.round(f.inventoryLevelPercent)}"
-                   data-device="${f.deviceId}" onchange="patchFreezer(this.dataset.device, {inventoryLevelPercent: parseFloat(this.value)})">
+                   data-god-control data-device="${f.deviceId}" ${f.godMode ? '' : 'disabled'}
+                   onchange="patchFreezer(this.dataset.device, {inventoryLevelPercent: parseFloat(this.value)})">
           </div>
         </div>
       </details>
@@ -219,12 +234,24 @@ function refreshCards(freezers) {
       icon.textContent = f.powerState === 'on' ? '❄️' : '⚠️';
       const sel = card.querySelector('.power-select');
       if (sel && document.activeElement !== sel) sel.value = f.powerState;
+      const tempInput = card.querySelector('.temp-input');
+      if (tempInput && document.activeElement !== tempInput) tempInput.value = f.temperature;
       const invInput = card.querySelector('.inv-input');
       if (invInput && document.activeElement !== invInput) invInput.value = Math.round(f.inventoryLevelPercent);
 
       /* Sync door toggle with actual state */
-      const doorToggle = card.querySelector('.god-mode input[type=checkbox]');
+      const doorToggle = card.querySelector('.door-toggle');
       if (doorToggle && document.activeElement !== doorToggle) doorToggle.checked = f.doorOpen;
+
+      const godMode = card.querySelector('.god-mode');
+      const godModeToggle = card.querySelector('.god-mode-toggle');
+      if (godMode && godModeToggle) {
+        godModeToggle.checked = f.godMode;
+        godMode.classList.toggle('active', f.godMode);
+        godMode.querySelectorAll('[data-god-control]').forEach(control => {
+          control.disabled = !f.godMode;
+        });
+      }
     }
     const actualEl = document.getElementById('actual-' + f.deviceId);
     if (actualEl) {
@@ -273,11 +300,34 @@ async function fetchState() {
 }
 
 async function patchFreezer(deviceId, data) {
-  await fetch('/api/freezer/' + deviceId, {
+  const res = await fetch('/api/freezer/' + deviceId, {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(data)
   });
+  if (!res.ok) throw new Error('Unable to update freezer ' + deviceId);
+  return res.json();
+}
+
+async function setGodMode(toggle) {
+  const godMode = toggle.closest('.god-mode');
+  const enabled = toggle.checked;
+  godMode.classList.toggle('active', enabled);
+  godMode.querySelectorAll('[data-god-control]').forEach(control => {
+    control.disabled = !enabled;
+  });
+
+  try {
+    await patchFreezer(toggle.dataset.device, {godMode: enabled});
+    await poll();
+  } catch (error) {
+    toggle.checked = !enabled;
+    godMode.classList.toggle('active', !enabled);
+    godMode.querySelectorAll('[data-god-control]').forEach(control => {
+      control.disabled = enabled;
+    });
+    window.alert(error.message);
+  }
 }
 
 async function startSim() {
