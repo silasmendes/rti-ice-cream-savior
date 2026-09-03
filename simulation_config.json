@@ -1,9 +1,9 @@
 {
   "enableLocalJsonOutput": true,
   "enableEventHub": true,
-  "telemetryIntervalSeconds": 15,
+  "telemetryIntervalSeconds": 60,
 
-  "numFreezers": 20,
+  "numFreezers": 4,
   "defaultTemperature": -20.0,  
 
   "regions": [
