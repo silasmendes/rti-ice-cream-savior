@@ -2,10 +2,12 @@
 
 An interactive dashboard that simulates IoT ice-cream freezers, generating controlled telemetry data that mimics real-world device behavior.
 
+This project is primarily designed as a hands-on learning resource for classes about Microsoft Fabric Real-Time Intelligence.
+
 ## Tech Stack
 
 - **Python 3** + **Flask** — backend API and telemetry engine
-- **HTML / CSS / JavaScript** — single-page dashboard (no build step)
+- **HTML / CSS / JavaScript** — single-page dashboard
 
 ## Quick Start
 
@@ -148,11 +150,6 @@ Use **Simulate Late Arrival** to mimic a temporary disconnection between the app
 
 The delayed-message queue is held in application memory. Stopping a simulation does not clear it, but stopping or restarting the Flask process discards any messages that have not been released.
 
-### Interval Configuration
-
-- **Input field** — set the telemetry interval in seconds (minimum: 1)
-- **Set button** — applies the new interval; takes effect on the next tick
-- Default: **60 seconds**
 
 ### Status Indicators
 
@@ -161,48 +158,36 @@ The delayed-message queue is held in application memory. Stopping a simulation d
 - **Late-arrival queue** — displays the number of messages waiting for Event Hub delivery
 - **Late-arrival timer** — displays elapsed time since delayed delivery was enabled
 
-## REST API
+## Send Telemetry to a Fabric Eventstream
 
-| Method  | Endpoint                    | Description                          |
-|---------|-----------------------------|--------------------------------------|
-| `GET`   | `/api/state`                | Full state: all freezers, run info   |
-| `PATCH` | `/api/freezer/<device_id>`  | Update a freezer's properties        |
-| `PATCH` | `/api/interval`             | Set the telemetry interval           |
-| `POST`  | `/api/late-arrival`         | Enable delayed delivery or flush queued messages |
-| `POST`  | `/api/start`                | Start a new simulation run           |
-| `POST`  | `/api/stop`                 | Stop the current simulation          |
+1. In a Fabric workspace, create a new **Eventstream**.
+2. Add a **Custom Endpoint** as a source, then publish the eventstream.
+3. Switch to **Live mode** and select the Custom Endpoint source. In the **Details** section, select the **Kafka** option.
+4. In the Kafka settings, select **SAS Key Authentication**.
+5. Copy the **Topic name** value and add it to your `.env` file as `EVENT_HUB_NAME`:
 
-Set late-arrival mode with a JSON body containing `{"active": true}` or `{"active": false}`. The endpoint returns the active state and queued message count. Disabling the mode waits for queued Event Hub messages to flush; if delivery fails, the unsent messages remain queued and the mode stays active.
+   ```dotenv
+   EVENT_HUB_NAME=<topic-name>
+   ```
 
-Set per-freezer God Mode through the freezer PATCH endpoint with `{"godMode": true}` or `{"godMode": false}`. The same request can include `temperature`, `doorOpen`, `powerState`, and `inventoryLevelPercent`.
+6. Copy the **Connection string-primary key** value and add it to your `.env` file as `EVENT_HUB_CONNECTION_STRING`:
 
-## Simulation Configuration
+   ```dotenv
+   EVENT_HUB_CONNECTION_STRING=<connection-string-primary-key>
+   ```
 
-All tunable thresholds live in `simulation_config.json`. Edit this file and restart the app to apply changes.
+7. Save the `.env` file and start the server:
 
-| Section | Key | Default | Description |
-|---------|-----|---------|-------------|
-| *(root)* | `numFreezers` | `25` | Number of simulated freezers |
-| *(root)* | `defaultTemperature` | `-20.0` | Initial set-point temperature (°C) |
-| *(root)* | `telemetryIntervalSeconds` | `60` | Default telemetry emit interval |
-| `temperature` | `powerOffWarmingMin/Max` | `0.5` / `1.0` | Warming rate when power is off |
-| `temperature` | `doorOpenWarmingMin/Max` | `0.3` / `0.8` | Warming rate when door is open |
-| `temperature` | `compressorCorrectionFactor` | `0.3` | How fast temp tracks toward set-point |
-| `temperature` | `noiseMin/Max` | `-0.6` / `0.6` | Random noise band per cycle |
-| `inventory` | `initRangeMin/Max` | `40.0` / `100.0` | Default starting inventory range |
-| `inventory` | `depletionMin/Max` | `0.1` / `0.7` | Normal per-cycle sales decrease |
-| `inventory` | `bulkPurchaseProbability` | `0.05` | Chance of a bulk-purchase spike |
-| `inventory` | `bulkPurchaseDropMin/Max` | `5.0` / `10.0` | Extra drop on a bulk purchase |
-| `inventory` | `restockThreshold` | `20.0` | Inventory % that triggers a restock |
-| `inventory` | `restockFillLevel` | `100.0` | Level inventory jumps to on restock |
-| `inventory` | `restockWaitCyclesMin/Max` | `1` / `30` | Delivery delay in telemetry cycles |
-| `inventory` | `consoleWarningThreshold` | `20.0` | Print ⚠️ console warning below this % |
-| `inventoryStartDistribution` | `lowPercent` | `0.05` | Fraction of freezers starting critically low |
-| `inventoryStartDistribution` | `lowRangeMin/Max` | `0.0` / `10.0` | Inventory range for the low group |
-| `inventoryStartDistribution` | `midPercent` | `0.05` | Fraction starting in the mid-warning band |
-| `inventoryStartDistribution` | `midRangeMin/Max` | `15.0` / `31.0` | Inventory range for the mid group |
+   ```bash
+   python app.py
+   ```
+
+8. Open **http://127.0.0.1:5000** in a web browser and start the simulation.
+9. Return to the Fabric Eventstream page and select the **Eventstream** node immediately after the Custom Endpoint source. Select **Data Preview** to monitor telemetry ingestion.
 
 ## KQL — Eventhouse Table & Ingestion Mapping
+
+To send the telemetry to a Fabric Eventhouse, use the following KQL commands to create the destination table and its ingestion mapping.
 
 ### Create table
 
@@ -242,3 +227,29 @@ All tunable thresholds live in `simulation_config.json`. Edit this file and rest
   { "column": "demoRunId",             "Properties": { "Path": "$['demoRunId']" } }
 ]
 ```
+
+## Simulation Configuration
+
+All tunable thresholds live in `simulation_config.json`. Edit this file and restart the app to apply changes.
+
+| Section | Key | Default | Description |
+|---------|-----|---------|-------------|
+| *(root)* | `numFreezers` | `4` | Number of simulated freezers |
+| *(root)* | `defaultTemperature` | `-20.0` | Initial set-point temperature (°C) |
+| *(root)* | `telemetryIntervalSeconds` | `30` | Default telemetry emit interval |
+| `temperature` | `powerOffWarmingMin/Max` | `0.5` / `1.0` | Warming rate when power is off |
+| `temperature` | `doorOpenWarmingMin/Max` | `0.3` / `0.8` | Warming rate when door is open |
+| `temperature` | `compressorCorrectionFactor` | `0.3` | How fast temp tracks toward set-point |
+| `temperature` | `noiseMin/Max` | `-0.6` / `0.6` | Random noise band per cycle |
+| `inventory` | `initRangeMin/Max` | `40.0` / `100.0` | Default starting inventory range |
+| `inventory` | `depletionMin/Max` | `0.1` / `0.7` | Normal per-cycle sales decrease |
+| `inventory` | `bulkPurchaseProbability` | `0.05` | Chance of a bulk-purchase spike |
+| `inventory` | `bulkPurchaseDropMin/Max` | `5.0` / `10.0` | Extra drop on a bulk purchase |
+| `inventory` | `restockThreshold` | `20.0` | Inventory % that triggers a restock |
+| `inventory` | `restockFillLevel` | `100.0` | Level inventory jumps to on restock |
+| `inventory` | `restockWaitCyclesMin/Max` | `1` / `10` | Delivery delay in telemetry cycles |
+| `inventory` | `consoleWarningThreshold` | `20.0` | Print ⚠️ console warning below this % |
+| `inventoryStartDistribution` | `lowPercent` | `0.10` | Fraction of freezers starting critically low |
+| `inventoryStartDistribution` | `lowRangeMin/Max` | `0.0` / `10.0` | Inventory range for the low group |
+| `inventoryStartDistribution` | `midPercent` | `0.20` | Fraction starting in the mid-warning band |
+| `inventoryStartDistribution` | `midRangeMin/Max` | `15.0` / `31.0` | Inventory range for the mid group |
