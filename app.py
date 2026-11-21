@@ -15,15 +15,34 @@ load_dotenv()
 app = Flask(__name__)
 
 # ── Event Hub client ────────────────────────────────────────────────
-EVENT_HUB_CONNECTION_STRING = os.getenv("EVENT_HUB_CONNECTION_STRING")
-EVENT_HUB_NAME = os.getenv("EVENT_HUB_NAME")
+EVENT_HUB_CONNECTION_STRING = os.getenv("EVENT_HUB_CONNECTION_STRING", "").strip()
+EVENT_HUB_NAME = os.getenv("EVENT_HUB_NAME", "").strip()
+EVENT_HUB_AUTH_MODE = os.getenv("EVENT_HUB_AUTH_MODE", "connection_string").strip().lower()
+EVENT_HUB_FULLY_QUALIFIED_NAMESPACE = os.getenv("EVENT_HUB_FULLY_QUALIFIED_NAMESPACE", "").strip()
 
 eh_producer = None
-if EVENT_HUB_CONNECTION_STRING and EVENT_HUB_NAME:
+if EVENT_HUB_AUTH_MODE == "azure_cli":
+    from azure.identity import AzureCliCredential
+
+    if not EVENT_HUB_FULLY_QUALIFIED_NAMESPACE or not EVENT_HUB_NAME:
+        raise ValueError("azure_cli authentication requires EVENT_HUB_FULLY_QUALIFIED_NAMESPACE and EVENT_HUB_NAME")
+    eh_producer = EventHubProducerClient(
+        fully_qualified_namespace=EVENT_HUB_FULLY_QUALIFIED_NAMESPACE,
+        eventhub_name=EVENT_HUB_NAME,
+        credential=AzureCliCredential(),
+    )
+elif EVENT_HUB_AUTH_MODE != "connection_string":
+    raise ValueError("EVENT_HUB_AUTH_MODE must be connection_string or azure_cli")
+elif EVENT_HUB_CONNECTION_STRING and EVENT_HUB_NAME:
     eh_producer = EventHubProducerClient.from_connection_string(
         conn_str=EVENT_HUB_CONNECTION_STRING,
         eventhub_name=EVENT_HUB_NAME,
     )
+elif EVENT_HUB_CONNECTION_STRING or EVENT_HUB_NAME:
+    raise ValueError("connection_string authentication requires EVENT_HUB_CONNECTION_STRING and EVENT_HUB_NAME")
+
+if eh_producer:
+    print(f"[EventHub] Authentication mode: {EVENT_HUB_AUTH_MODE}; hub: {EVENT_HUB_NAME}")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "freezer-telemetry-output")
 

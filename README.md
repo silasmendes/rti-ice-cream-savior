@@ -17,7 +17,7 @@ This project is primarily designed as a hands-on learning resource for classes a
 # source .venv/bin/activate   # macOS / Linux
 
 # Install dependencies
-uv pip install flask
+python -m pip install -r requirements.txt
 
 # Run the app
 python app.py
@@ -158,7 +158,72 @@ The delayed-message queue is held in application memory. Stopping a simulation d
 - **Late-arrival queue** — displays the number of messages waiting for Event Hub delivery
 - **Late-arrival timer** — displays elapsed time since delayed delivery was enabled
 
+## Choose Event Hubs authentication
+
+Copy `.env.example` to `.env` if you do not already have one. Choose authentication with **one setting**, `EVENT_HUB_AUTH_MODE`:
+
+| Mode | Required settings | Sign-in |
+|------|-------------------|---------|
+| `connection_string` (default) | `EVENT_HUB_NAME`, `EVENT_HUB_CONNECTION_STRING` | SAS key in the connection string |
+| `azure_cli` | `EVENT_HUB_NAME`, `EVENT_HUB_FULLY_QUALIFIED_NAMESPACE` | Your Entra account through `az login` |
+
+You can keep both sets of values in `.env` and switch only `EVENT_HUB_AUTH_MODE` when the destination Event Hub is the same. Update `EVENT_HUB_NAME` too when changing destinations. The inactive mode's credentials are ignored; the app never falls back to another mode after an authentication failure.
+
+**Stop and restart the Flask process after editing `.env`.** Stopping and starting the simulation in the dashboard does not reload authentication. Existing terminal environment variables take precedence over `.env` values. At startup, the app prints the selected mode and Event Hub name, without credentials.
+
+### SAS key / connection string
+
+1. In Azure Portal, open your Event Hubs namespace or Event Hub and select **Shared access policies**. Use a policy with **Send** permission and copy its complete **Connection string–primary key** or secondary connection string.
+2. Configure `.env`:
+
+   ```dotenv
+   EVENT_HUB_AUTH_MODE=connection_string
+   EVENT_HUB_NAME=<event-hub-name>
+   EVENT_HUB_CONNECTION_STRING="Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy-name>;SharedAccessKey=<key>"
+   ```
+
+   Paste the complete connection string, not just the key. Namespace connection strings work because the app supplies `EVENT_HUB_NAME` separately. If the connection string includes `EntityPath`, use the same Event Hub name in `EVENT_HUB_NAME`.
+
+3. Restart `python app.py` and start the simulation. No Azure CLI login is needed in this mode.
+
+SAS/local authentication must be enabled on the namespace and permitted by your organization's policies. Switching this setting cannot bypass a policy that disables SAS. See [Microsoft's SAS documentation](https://learn.microsoft.com/en-us/azure/event-hubs/authenticate-shared-access-signature).
+
+### Entra account / Azure CLI
+
+1. In Azure Portal, open your Event Hub (or its namespace), select **Access control (IAM)**, and assign your user **Azure Event Hubs Data Sender**. An administrator with role assignment permissions may need to do this. Management roles such as Contributor alone do not grant permission to send events.
+2. Install [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) and install the Python dependencies with `python -m pip install -r requirements.txt`.
+3. Sign in to the tenant that owns the Event Hubs namespace:
+
+   ```powershell
+   az login --tenant <tenant-id>
+   az account set --subscription <subscription-id>
+   ```
+
+   On Windows, if `az` is not recognized after installation, fully restart your IDE. For the current PowerShell terminal, the default 64-bit installation can be added with:
+
+   ```powershell
+   $env:Path = "C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin;" + $env:Path
+   ```
+
+4. Configure `.env`:
+
+   ```dotenv
+   EVENT_HUB_AUTH_MODE=azure_cli
+   EVENT_HUB_FULLY_QUALIFIED_NAMESPACE=rgehssm001.servicebus.windows.net
+   EVENT_HUB_NAME=evh001
+   ```
+
+   Use your actual namespace hostname and Event Hub name. This mode uses `AzureCliCredential` and ignores `EVENT_HUB_CONNECTION_STRING`. It supports namespaces where SAS/local authentication is disabled. No password or access token belongs in `.env`.
+
+5. Restart `python app.py` from a terminal where `az` is available and start the simulation. New role assignments can take several minutes to propagate. If the CLI session expires, run `az login` again.
+
+This mode is for local development using your signed-in account. For an unattended Azure deployment, use a managed identity instead of a personal CLI session.
+
+See [Microsoft's Entra authorization documentation](https://learn.microsoft.com/en-us/azure/event-hubs/authenticate-application).
+
 ## Send Telemetry to a Fabric Eventstream
+
+Use `EVENT_HUB_AUTH_MODE=connection_string` (the default) for the SAS configuration below.
 
 1. In a Fabric workspace, create a new **Eventstream**.
 2. Add a **Custom Endpoint** as a source, then publish the eventstream.
