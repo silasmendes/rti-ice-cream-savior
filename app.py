@@ -387,7 +387,7 @@ def generate_telemetry():
 
             messages.append(message)
 
-        # Send to Event Hub, or hold messages to simulate a disconnected producer.
+        # Send to Event Hub, or queue messages while event delivery is paused.
         if eh_producer and messages and CFG.get("enableEventHub", True):
             with eventhub_lock:
                 with sim_lock:
@@ -397,7 +397,7 @@ def generate_telemetry():
                         queued_count = len(late_arrival_messages)
 
                 if hold_messages:
-                    print(f"[EventHub] Late arrival active: {queued_count} events queued")
+                    print(f"[EventHub] Event delivery paused: {queued_count} events queued")
                 else:
                     try:
                         sent_count = send_eventhub_messages(messages)
@@ -518,13 +518,13 @@ def set_late_arrival():
                 sent_count = send_eventhub_batch(pending_messages)
                 with sim_lock:
                     del late_arrival_messages[:sent_count]
-                print(f"[EventHub] Flushed {sent_count} late-arrival events")
+                print(f"[EventHub] Flushed {sent_count} queued events")
         except Exception as exc:
-            print(f"[EventHub] Error flushing late-arrival events: {exc}")
+            print(f"[EventHub] Error flushing queued events: {exc}")
             with sim_lock:
                 queued_count = len(late_arrival_messages)
             return jsonify({
-                "error": "Unable to flush late-arrival events",
+                "error": "Unable to flush queued events",
                 "active": True,
                 "startedAt": late_arrival_started_at,
                 "queuedCount": queued_count,

@@ -138,25 +138,26 @@ Starts telemetry generation for all freezers. On each start:
 
 Stops the background telemetry thread. No more messages are generated until the next start. The status badge switches to **STOPPED** (red).
 
-### Late-Arrival Simulation
+### Pause Event Delivery
 
-Use **Simulate Late Arrival** to mimic a temporary disconnection between the app and Event Hub:
+Select **Pause Event Delivery** to hold new telemetry events in memory instead of sending them to Event Hub:
 
-- While active, telemetry continues to be generated and saved as local JSON, but Event Hub delivery is paused.
-- The dashboard shows how many messages are queued for delayed delivery.
-- A live `MM:SS` timer shows how long late-arrival mode has been active and remains accurate after a dashboard refresh.
-- Select **Resume Event Hub** to send all queued messages before normal delivery resumes.
-- Delayed messages retain their original timestamps, sequence numbers, message IDs, and run IDs.
+- Telemetry generation continues while the simulation is running. Local JSON files are saved only when `enableLocalJsonOutput` is enabled.
+- The dashboard shows the number of queued events and a live `MM:SS` pause timer that remains accurate after a dashboard refresh.
+- Select **Resume & Send Queued Events** to send the queue in batches before normal delivery resumes.
+- Queued events retain their original timestamps, sequence numbers, message IDs, and run IDs.
+- If sending fails, remaining events stay queued so you can retry.
 
-The delayed-message queue is held in application memory. Stopping a simulation does not clear it, but stopping or restarting the Flask process discards any messages that have not been released.
+This pauses publishing; it does not disconnect the network, deliberately reorder events, or configure downstream handling of late events. Event Hub must be configured and enabled to pause delivery.
 
+The queue is held in application memory. Stopping the simulation preserves it, but stopping or restarting the Flask process discards any events that have not been sent.
 
 ### Status Indicators
 
 - **Status badge** — green `RUNNING` or red `STOPPED`
 - **Run ID** — displays the current `demoRunId` while a simulation is active
-- **Late-arrival queue** — displays the number of messages waiting for Event Hub delivery
-- **Late-arrival timer** — displays elapsed time since delayed delivery was enabled
+- **Queued events** — displays the number of messages waiting for Event Hub delivery
+- **Delivery pause timer** — displays elapsed time since event delivery was paused
 
 ## Choose Event Hubs authentication
 

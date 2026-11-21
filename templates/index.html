@@ -116,9 +116,9 @@ main{padding:1.5rem 2rem}
     <button class="btn-start" id="btnStart" onclick="startSim()">▶ Start</button>
     <button class="btn-stop"  id="btnStop" onclick="stopSim()" disabled>■ Stop</button>
     <button class="btn-outage" id="btnOutage" onclick="toggleOutage()">⚡ Regional Power Outage</button>
-    <button class="btn-late" id="btnLateArrival" onclick="toggleLateArrival()" aria-pressed="false">⏱ Simulate Late Arrival</button>
+    <button class="btn-late" id="btnLateArrival" onclick="toggleLateArrival()" aria-pressed="false">⏱ Pause Event Delivery</button>
     <span class="late-count hidden" id="lateArrivalCount">0 queued</span>
-    <span class="late-duration hidden" id="lateArrivalDuration" role="timer" aria-label="Late arrival duration">00:00</span>
+    <span class="late-duration hidden" id="lateArrivalDuration" role="timer" aria-label="Event delivery pause duration">00:00</span>
     <span id="statusBadge" class="status-badge stopped">STOPPED</span>
     <span id="runId" class="run-id"></span>
   </div>
@@ -378,7 +378,7 @@ async function toggleLateArrival() {
       body: JSON.stringify({active: requestedState})
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Unable to update late-arrival simulation');
+    if (!res.ok) throw new Error(data.error || 'Unable to update event delivery');
     lateArrivalActive = data.active;
     updateLateArrivalUI(data.active, data.queuedCount, true, data.startedAt);
   } catch (error) {
@@ -397,10 +397,10 @@ function updateLateArrivalUI(active, queuedCount, eventHubConfigured, startedAt)
   btn.disabled = lateArrivalBusy || !eventHubConfigured;
   btn.classList.toggle('active', active);
   btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-  btn.title = eventHubConfigured ? '' : 'Configure and enable Event Hub to use this simulation';
+  btn.title = eventHubConfigured ? '' : 'Configure and enable Event Hub to pause event delivery';
   btn.textContent = lateArrivalBusy
-    ? (active ? '↗ Releasing Events...' : '⏱ Updating...')
-    : (active ? '↗ Resume Event Hub' : '⏱ Simulate Late Arrival');
+    ? (active ? '↗ Sending Queued Events...' : '⏱ Updating...')
+    : (active ? '↗ Resume & Send Queued Events' : '⏱ Pause Event Delivery');
 
   const count = document.getElementById('lateArrivalCount');
   count.textContent = queuedCount + ' queued';
